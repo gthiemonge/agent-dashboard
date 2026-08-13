@@ -197,6 +197,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     run["exitCode"] = result.returncode
                     run["status"] = "completed" if result.returncode == 0 else "failed"
                     run["finishedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                self._save_run_logs(run_output, result.stdout, result.stderr, run)
                 log.info("Run #%d finished: agent=%s status=%s exit_code=%d", run_id, agent_name, run["status"], result.returncode)
                 if result.stderr:
                     log.debug("Run #%d stderr: %s", run_id, result.stderr.strip())
@@ -205,12 +206,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     run["status"] = "failed"
                     run["stderr"] = f"Command timed out after {timeout_s}s"
                     run["finishedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                self._save_run_logs(run_output, "", run["stderr"], run)
                 log.warning("Run #%d timed out after %ds: agent=%s", run_id, timeout_s, agent_name)
             except Exception as e:
                 with lock:
                     run["status"] = "failed"
                     run["stderr"] = str(e)
                     run["finishedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                self._save_run_logs(run_output, "", run["stderr"], run)
                 log.error("Run #%d error: agent=%s %s", run_id, agent_name, e)
 
         log.info("Run #%d started: agent=%s params=%s", run_id, agent_name, params)
@@ -218,6 +221,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         threading.Thread(target=execute, daemon=True).start()
         self._json_response({"runId": run_id, "outputDir": str(run_output)})
+
+    @staticmethod
+    def _save_run_logs(run_output, stdout, stderr, run):
+        if stdout:
+            (run_output / ".stdout.log").write_text(stdout)
+        if stderr:
+            (run_output / ".stderr.log").write_text(stderr)
+        meta_path = run_output / ".run.json"
+        meta = {}
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+            except Exception:
+                pass
+        meta["status"] = run["status"]
+        meta["exitCode"] = run.get("exitCode")
+        meta["finishedAt"] = run.get("finishedAt")
+        meta_path.write_text(json.dumps(meta, default=str))
 
     def _enrich_run(self, run):
         out_dir = Path(run.get("outputDir", ""))
@@ -250,6 +271,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         continue
                     params = {}
                     started = None
+                    meta = {}
                     meta_path = run_dir / ".run.json"
                     if meta_path.exists():
                         try:
@@ -259,18 +281,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                 started = meta.get("startedAt")
                         except Exception:
                             pass
+                    stdout_path = run_dir / ".stdout.log"
+                    stderr_path = run_dir / ".stderr.log"
                     in_memory[str(run_dir)] = {
                         "id": None,
                         "agent": agent_dir.name,
                         "params": params,
                         "command": None,
                         "outputDir": str(run_dir),
-                        "status": "completed",
+                        "status": meta.get("status", "completed"),
                         "startedAt": started or run_dir.name.replace("run-", ""),
-                        "finishedAt": None,
-                        "exitCode": None,
-                        "stdout": "",
-                        "stderr": "",
+                        "finishedAt": meta.get("finishedAt"),
+                        "exitCode": meta.get("exitCode"),
+                        "stdout": stdout_path.read_text() if stdout_path.exists() else "",
+                        "stderr": stderr_path.read_text() if stderr_path.exists() else "",
                         "files": files,
                     }
 
