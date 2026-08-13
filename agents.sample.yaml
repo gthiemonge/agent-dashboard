@@ -1,0 +1,51 @@
+outputDir: ./outputs
+
+agents:
+  - name: summary-agent
+    description: Generates a summary of a given topic
+    command: "echo '# Summary: {{topic}}' > {{outputDir}}/summary.md && echo 'Depth: {{depth}}' >> {{outputDir}}/summary.md && echo '' >> {{outputDir}}/summary.md && echo 'This is a generated summary about **{{topic}}** at {{depth}} depth.' >> {{outputDir}}/summary.md"
+    timeout: 60
+    params:
+      - name: topic
+        label: Topic
+        type: string
+        required: true
+        placeholder: "e.g. Kubernetes networking"
+      - name: depth
+        label: Analysis Depth
+        type: select
+        options: [shallow, medium, deep]
+        default: medium
+
+  - name: code-reviewer
+    description: Reviews code in a given repository path
+    command: "echo '# Code Review' > {{outputDir}}/review.md && echo '' >> {{outputDir}}/review.md && echo 'Reviewing: `{{path}}`' >> {{outputDir}}/review.md && echo 'Language filter: {{language}}' >> {{outputDir}}/review.md && echo '' >> {{outputDir}}/review.md && echo '## Findings' >> {{outputDir}}/review.md && echo '- No issues found (demo)' >> {{outputDir}}/review.md"
+    timeout: 120
+    params:
+      - name: path
+        label: Repository Path
+        type: string
+        required: true
+        placeholder: "/path/to/repo"
+      - name: language
+        label: Language
+        type: select
+        options: [python, javascript, go, rust, all]
+        default: all
+
+  - name: daily-digest
+    description: Generates a daily digest of activity
+    command: "echo '# Daily Digest' > {{outputDir}}/digest.md && echo '' >> {{outputDir}}/digest.md && echo 'Generated on {{date}}' >> {{outputDir}}/digest.md && echo 'Scope: {{scope}}' >> {{outputDir}}/digest.md"
+    schedule: "0 9 * * *"
+    timeout: 300
+    params:
+      - name: date
+        label: Date
+        type: string
+        default: today
+        placeholder: "YYYY-MM-DD or 'today'"
+      - name: scope
+        label: Scope
+        type: select
+        options: [team, org, all]
+        default: team
