@@ -88,6 +88,10 @@
     .run-agent { font-size: 14px; font-weight: 500; }
     .run-time { font-size: 12px; color: var(--t3); }
     .run-status-label { font-size: 12px; }
+    .flag-btn { background: none; border: none; font-size: 14px; padding: 2px 4px; transition: all .15s; flex-shrink: 0; cursor: pointer; filter: brightness(0.3); color: var(--t3); }
+    .flag-btn:hover { filter: brightness(0.6); color: var(--t2); }
+    .flag-btn.active { filter: brightness(1); color: var(--t1); }
+    .flag-btns { display: flex; gap: 2px; flex-shrink: 0; }
 
     /* File tabs */
     .file-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
@@ -338,7 +342,21 @@ function renderAgentView() {
                   )
                 : null,
             ),
-            h('span', { className: 'run-status-label', style: { color: run.status === 'completed' ? 'var(--green)' : run.status === 'failed' ? 'var(--red)' : 'var(--yellow)' } }, run.status),
+            h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: '0' } },
+              h('span', { className: 'run-status-label', style: { color: run.status === 'completed' ? 'var(--green)' : run.status === 'failed' ? 'var(--red)' : 'var(--yellow)' } }, run.status),
+              h('div', { className: 'flag-btns' },
+                h('button', {
+                  className: `flag-btn ${run.pinned ? 'active' : ''}`,
+                  onClick: (e) => { e.stopPropagation(); toggleFlag(run, 'pinned'); },
+                  title: run.pinned ? 'Unpin' : 'Pin to top',
+                }, '📌'),
+                h('button', {
+                  className: `flag-btn ${run.starred ? 'active' : ''}`,
+                  onClick: (e) => { e.stopPropagation(); toggleFlag(run, 'starred'); },
+                  title: run.starred ? 'Unstar' : 'Star',
+                }, '★'),
+              ),
+            ),
           );
         }),
       ),
@@ -413,7 +431,7 @@ function renderOutputBrowser() {
 
   const listContainer = h('div', { id: 'output-list' });
   left.appendChild(listContainer);
-  renderOutputList(listContainer, state.outputs, '');
+  renderOutputList(listContainer, state.runs.filter(r => r.files && r.files.length), '');
 
   wrapper.appendChild(left);
 
@@ -435,8 +453,14 @@ function renderOutputBrowser() {
 function filterOutputs(term) {
   const container = $('#output-list');
   if (!container) return;
-  const filtered = term ? state.outputs.filter(o => o.agent.includes(term)) : state.outputs;
+  const all = state.runs.filter(r => r.files && r.files.length);
+  const filtered = term ? all.filter(o => o.agent.includes(term)) : all;
   renderOutputList(container, filtered, term);
+}
+
+function runDirName(run) {
+  if (!run.outputDir) return '';
+  return run.outputDir.split('/').pop();
 }
 
 function renderOutputList(container, outputs, filter) {
@@ -450,28 +474,47 @@ function renderOutputList(container, outputs, filter) {
     container.appendChild(h('div', { style: { marginBottom: '24px' } },
       h('div', { className: 'group-header' }, agent),
       h('div', { className: 'run-list' },
-        ...runs.map(output =>
-          h('div', { className: `run-item ${state.viewingFile?.run === output.run && state.viewingFile?.agent === output.agent ? 'active' : ''}` },
+        ...runs.map(run => {
+          const dirName = runDirName(run);
+          return h('div', { className: `run-item ${state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}` },
             h('div', { className: 'run-info' },
-              h('div', { className: 'run-agent', style: { fontSize: '13px' } }, output.run),
-              output.params && Object.keys(output.params).length
+              h('div', { className: 'run-agent', style: { fontSize: '13px' } },
+                run.id ? `Run #${run.id}` : run.startedAt || dirName,
+              ),
+              run.params && Object.keys(run.params).length
                 ? h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' } },
-                    ...Object.entries(output.params).map(([k, v]) =>
+                    ...Object.entries(run.params).map(([k, v]) =>
                       h('span', { className: 'tag', style: { fontSize: '11px', padding: '1px 6px' } }, `${k}: ${v}`)
                     ),
                   )
                 : null,
               h('div', { className: 'file-tabs' },
-                ...output.files.map(f =>
+                ...run.files.map(f =>
                   h('button', {
-                    className: `file-tab ${state.viewingFile?.file === f && state.viewingFile?.run === output.run ? 'active' : ''}`,
-                    onClick: (e) => { e.stopPropagation(); loadFileContent(output, f); }
+                    className: `file-tab ${state.viewingFile?.file === f && state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}`,
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      loadFileContent({ agent: run.agent, run: dirName }, f);
+                      state.viewingFile.outputDir = run.outputDir;
+                    }
                   }, f)
                 ),
               ),
             ),
-          )
-        ),
+            h('div', { className: 'flag-btns' },
+              h('button', {
+                className: `flag-btn ${run.pinned ? 'active' : ''}`,
+                onClick: (e) => { e.stopPropagation(); toggleFlag(run, 'pinned'); },
+                title: run.pinned ? 'Unpin' : 'Pin to top',
+              }, '📌'),
+              h('button', {
+                className: `flag-btn ${run.starred ? 'active' : ''}`,
+                onClick: (e) => { e.stopPropagation(); toggleFlag(run, 'starred'); },
+                title: run.starred ? 'Unstar' : 'Star',
+              }, '★'),
+            ),
+          );
+        }),
       ),
     ));
   }
@@ -697,6 +740,15 @@ async function refreshRuns() {
   state.runs = await api.getRuns();
   state.outputs = await api.getOutputs();
   render();
+}
+
+async function toggleFlag(run, flag) {
+  await fetch('/api/flag', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ outputDir: run.outputDir, flag }),
+  });
+  await refreshRuns();
 }
 
 // Init
