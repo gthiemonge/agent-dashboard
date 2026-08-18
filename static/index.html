@@ -98,6 +98,10 @@
     .file-tab { padding: 4px 10px; border-radius: var(--r); font-size: 12px; font-family: var(--mono); color: var(--t2); background: var(--s2); border: 1px solid var(--border); transition: all .15s; cursor: pointer; }
     .file-tab:hover { border-color: var(--border-h); }
     .file-tab.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+    .file-group { display: inline-flex; align-items: center; }
+    .file-group .file-tab { border-radius: var(--r) 0 0 var(--r); }
+    .dl-btn { padding: 4px 6px; border-radius: 0 var(--r) var(--r) 0; font-size: 11px; color: var(--t3); background: var(--s2); border: 1px solid var(--border); border-left: none; transition: all .15s; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+    .dl-btn:hover { color: var(--t1); background: var(--s3); }
 
     /* Markdown */
     .md-viewer { background: var(--s1); border: 1px solid var(--border); border-radius: var(--rl); padding: 32px; }
@@ -326,19 +330,27 @@ function renderAgentView() {
                 : null,
               (run.files && run.files.length)
                 ? h('div', { className: 'file-tabs' },
-                    ...run.files.map(f =>
-                      h('button', {
-                        className: `file-tab ${state.viewingFile?.file === f && state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}`,
-                        onClick: (e) => {
-                          e.stopPropagation();
-                          const parts = run.outputDir.split('/');
-                          const runDir = parts[parts.length - 1];
-                          const agentDir = parts[parts.length - 2];
-                          loadFileContent({ agent: agentDir, run: runDir }, f);
-                          state.viewingFile.outputDir = run.outputDir;
-                        }
-                      }, f)
-                    ),
+                    ...run.files.map(f => {
+                      const parts = run.outputDir.split('/');
+                      const runDir = parts[parts.length - 1];
+                      const agentDir = parts[parts.length - 2];
+                      return h('span', { className: 'file-group' },
+                        h('button', {
+                          className: `file-tab ${state.viewingFile?.file === f && state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}`,
+                          onClick: (e) => {
+                            e.stopPropagation();
+                            loadFileContent({ agent: agentDir, run: runDir }, f);
+                            state.viewingFile.outputDir = run.outputDir;
+                          }
+                        }, f),
+                        h('a', {
+                          className: 'dl-btn',
+                          href: `/api/download/${agentDir}/${runDir}/${f}`,
+                          title: 'Download',
+                          onClick: (e) => e.stopPropagation(),
+                        }, '↓'),
+                      );
+                    }),
                   )
                 : null,
             ),
@@ -402,9 +414,14 @@ function renderAgentView() {
   }
 
   if (state.viewingFile) {
+    const vf = state.viewingFile;
+    const dlUrl = `/api/download/${vf.agent || ''}/${vf.run || ''}/${vf.file}`;
     right.appendChild(h('div', {},
-      h('div', { className: 'sub-header' }, state.viewingFile.file),
-      h('div', { className: 'md-viewer', htmlContent: marked.parse(state.viewingFile.content || '') }),
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' } },
+        h('div', { className: 'sub-header', style: { marginBottom: '0' } }, vf.file),
+        h('a', { className: 'btn btn-secondary', href: dlUrl, style: { fontSize: '12px', padding: '5px 12px', textDecoration: 'none' } }, 'Download'),
+      ),
+      h('div', { className: 'md-viewer', htmlContent: marked.parse(vf.content || '') }),
     ));
   }
 
@@ -438,10 +455,13 @@ function renderOutputBrowser() {
   // Right: viewer
   const right = h('div', {});
   if (state.viewingFile) {
-    right.appendChild(h('div', { style: { fontSize: '13px', color: 'var(--t3)', marginBottom: '12px' } },
-      `${state.viewingFile.agent} / ${state.viewingFile.run} / ${state.viewingFile.file}`
+    const vf = state.viewingFile;
+    const dlUrl = `/api/download/${vf.agent || ''}/${vf.run || ''}/${vf.file}`;
+    right.appendChild(h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' } },
+      h('div', { style: { fontSize: '13px', color: 'var(--t3)' } }, `${vf.agent} / ${vf.run} / ${vf.file}`),
+      h('a', { className: 'btn btn-secondary', href: dlUrl, style: { fontSize: '12px', padding: '5px 12px', textDecoration: 'none' } }, 'Download'),
     ));
-    right.appendChild(h('div', { className: 'md-viewer', htmlContent: marked.parse(state.viewingFile.content || '') }));
+    right.appendChild(h('div', { className: 'md-viewer', htmlContent: marked.parse(vf.content || '') }));
   } else {
     right.appendChild(h('div', { style: { textAlign: 'center', padding: '40px', color: 'var(--t3)', fontSize: '13px' } }, 'Select a file to view its contents'));
   }
@@ -490,14 +510,22 @@ function renderOutputList(container, outputs, filter) {
                 : null,
               h('div', { className: 'file-tabs' },
                 ...run.files.map(f =>
-                  h('button', {
-                    className: `file-tab ${state.viewingFile?.file === f && state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}`,
-                    onClick: (e) => {
-                      e.stopPropagation();
-                      loadFileContent({ agent: run.agent, run: dirName }, f);
-                      state.viewingFile.outputDir = run.outputDir;
-                    }
-                  }, f)
+                  h('span', { className: 'file-group' },
+                    h('button', {
+                      className: `file-tab ${state.viewingFile?.file === f && state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}`,
+                      onClick: (e) => {
+                        e.stopPropagation();
+                        loadFileContent({ agent: run.agent, run: dirName }, f);
+                        state.viewingFile.outputDir = run.outputDir;
+                      }
+                    }, f),
+                    h('a', {
+                      className: 'dl-btn',
+                      href: `/api/download/${run.agent}/${dirName}/${f}`,
+                      title: 'Download',
+                      onClick: (e) => e.stopPropagation(),
+                    }, '↓'),
+                  )
                 ),
               ),
             ),

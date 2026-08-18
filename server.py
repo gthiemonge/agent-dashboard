@@ -241,6 +241,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response({"error": "Not found"}, 404)
         elif path == "/api/outputs":
             self._json_response(self._list_outputs())
+        elif path.startswith("/api/download/"):
+            self._download_file(path)
         elif path.startswith("/api/outputs/"):
             self._serve_output_file(path)
         else:
@@ -483,6 +485,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         content = file_path.read_text()
         self._json_response({"content": content, "file": filename})
+
+    def _download_file(self, path):
+        parts = path.split("/")
+        if len(parts) < 6:
+            self._json_response({"error": "Invalid path"}, 400)
+            return
+
+        agent, run, filename = parts[3], parts[4], "/".join(parts[5:])
+        config = load_config()
+        base_dir = Path(config.get("outputDir", "./outputs")).resolve()
+        file_path = (base_dir / agent / run / filename).resolve()
+
+        if not str(file_path).startswith(str(base_dir)):
+            self._json_response({"error": "Forbidden"}, 403)
+            return
+        if not file_path.exists():
+            self._json_response({"error": "File not found"}, 404)
+            return
+
+        data = file_path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Disposition", f'attachment; filename="{file_path.name}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def log_message(self, format, *args):
         pass  # quiet
