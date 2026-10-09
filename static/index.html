@@ -182,6 +182,7 @@ let state = {
   outputs: [],
   viewingFile: null,    // { agent, run, file, content }
   viewingRun: null,
+  outputFilter: '',
 };
 
 // API
@@ -440,20 +441,56 @@ function renderOutputBrowser() {
   const left = h('div', {});
 
   const filterInput = h('input', {
-    type: 'text', className: 'form-input', placeholder: 'Filter by agent name...',
+    type: 'text', className: 'form-input', placeholder: 'Search by agent name or parameter value...',
     style: { marginBottom: '16px' },
-    onInput: (e) => { filterOutputs(e.target.value); }
+    value: state.outputFilter,
+    onInput: (e) => { state.outputFilter = e.target.value; renderFilteredOutputs($('#output-list'), e.target.value); }
   });
   left.appendChild(filterInput);
 
   const listContainer = h('div', { id: 'output-list' });
   left.appendChild(listContainer);
-  renderOutputList(listContainer, state.runs.filter(r => r.files && r.files.length), '');
+  renderFilteredOutputs(listContainer, state.outputFilter);
 
   wrapper.appendChild(left);
 
   // Right: viewer
   const right = h('div', {});
+
+  if (state.viewingRun) {
+    const run = state.viewingRun;
+    const title = run.id ? `Run #${run.id}` : run.startedAt || '';
+    const detailChildren = [
+      h('div', { className: 'detail-row' },
+        h('strong', {}, 'Agent: '), h('span', {}, run.agent),
+      ),
+      h('div', { className: 'detail-row' },
+        h('strong', {}, 'Status: '),
+        h('span', { style: { color: run.status === 'completed' ? 'var(--green)' : run.status === 'failed' ? 'var(--red)' : 'var(--yellow)' } }, run.status),
+      ),
+    ];
+    if (run.command) {
+      detailChildren.push(h('div', { className: 'detail-row' }, h('strong', {}, 'Command:')));
+      detailChildren.push(h('div', { className: 'cmd-preview' }, run.command));
+    }
+    if (run.stdout) {
+      detailChildren.push(h('div', { style: { marginTop: '12px' } },
+        h('div', { className: 'detail-row' }, h('strong', {}, 'Output:')),
+        h('pre', { style: { background: 'var(--s0)', padding: '12px', borderRadius: 'var(--r)', fontSize: '12px', fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap', color: 'var(--t2)' } }, run.stdout),
+      ));
+    }
+    if (run.stderr) {
+      detailChildren.push(h('div', { style: { marginTop: '12px' } },
+        h('div', { className: 'detail-row' }, h('strong', {}, 'Errors:')),
+        h('pre', { style: { background: 'var(--red-bg)', padding: '12px', borderRadius: 'var(--r)', fontSize: '12px', fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap', color: 'var(--red)' } }, run.stderr),
+      ));
+    }
+    right.appendChild(h('div', { style: { marginBottom: '24px' } },
+      h('div', { className: 'sub-header' }, `${title} Details`),
+      h('div', { className: 'detail-box' }, ...detailChildren),
+    ));
+  }
+
   if (state.viewingFile) {
     const vf = state.viewingFile;
     const dlUrl = `/api/download/${vf.agent || ''}/${vf.run || ''}/${vf.file}`;
@@ -462,20 +499,30 @@ function renderOutputBrowser() {
       h('a', { className: 'btn btn-secondary', href: dlUrl, style: { fontSize: '12px', padding: '5px 12px', textDecoration: 'none' } }, 'Download'),
     ));
     right.appendChild(h('div', { className: 'md-viewer', htmlContent: marked.parse(vf.content || '') }));
-  } else {
-    right.appendChild(h('div', { style: { textAlign: 'center', padding: '40px', color: 'var(--t3)', fontSize: '13px' } }, 'Select a file to view its contents'));
+  }
+
+  if (!state.viewingRun && !state.viewingFile) {
+    right.appendChild(h('div', { style: { textAlign: 'center', padding: '40px', color: 'var(--t3)', fontSize: '13px' } }, 'Select a run or click a file to view details'));
   }
   wrapper.appendChild(right);
 
   return wrapper;
 }
 
-function filterOutputs(term) {
-  const container = $('#output-list');
+function renderFilteredOutputs(container, term) {
   if (!container) return;
   const all = state.runs.filter(r => r.files && r.files.length);
-  const filtered = term ? all.filter(o => o.agent.includes(term)) : all;
-  renderOutputList(container, filtered, term);
+  if (!term) {
+    renderOutputList(container, all);
+    return;
+  }
+  const lower = term.toLowerCase();
+  const filtered = all.filter(o =>
+    o.agent.toLowerCase().includes(lower) ||
+    Object.values(o.params || {}).some(v => String(v).toLowerCase().includes(lower)) ||
+    Object.keys(o.params || {}).some(k => k.toLowerCase().includes(lower))
+  );
+  renderOutputList(container, filtered);
 }
 
 function runDirName(run) {
@@ -483,72 +530,74 @@ function runDirName(run) {
   return run.outputDir.split('/').pop();
 }
 
-function renderOutputList(container, outputs, filter) {
+function renderOutputList(container, outputs) {
   container.innerHTML = '';
-  const grouped = {};
-  for (const o of outputs) {
-    if (!grouped[o.agent]) grouped[o.agent] = [];
-    grouped[o.agent].push(o);
-  }
-  for (const [agent, runs] of Object.entries(grouped)) {
-    container.appendChild(h('div', { style: { marginBottom: '24px' } },
-      h('div', { className: 'group-header' }, agent),
-      h('div', { className: 'run-list' },
-        ...runs.map(run => {
-          const dirName = runDirName(run);
-          return h('div', { className: `run-item ${state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}` },
-            h('div', { className: 'run-info' },
-              h('div', { className: 'run-agent', style: { fontSize: '13px' } },
-                run.id ? `Run #${run.id}` : run.startedAt || dirName,
-              ),
-              run.params && Object.keys(run.params).length
-                ? h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' } },
-                    ...Object.entries(run.params).map(([k, v]) =>
-                      h('span', { className: 'tag', style: { fontSize: '11px', padding: '1px 6px' } }, `${k}: ${v}`)
-                    ),
-                  )
-                : null,
-              h('div', { className: 'file-tabs' },
-                ...run.files.map(f =>
-                  h('span', { className: 'file-group' },
-                    h('button', {
-                      className: `file-tab ${state.viewingFile?.file === f && state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}`,
-                      onClick: (e) => {
-                        e.stopPropagation();
-                        loadFileContent({ agent: run.agent, run: dirName }, f);
-                        state.viewingFile.outputDir = run.outputDir;
-                      }
-                    }, f),
-                    h('a', {
-                      className: 'dl-btn',
-                      href: `/api/download/${run.agent}/${dirName}/${f}`,
-                      title: 'Download',
-                      onClick: (e) => e.stopPropagation(),
-                    }, '↓'),
-                  )
-                ),
-              ),
-            ),
-            h('div', { className: 'flag-btns' },
-              h('button', {
-                className: `flag-btn ${run.pinned ? 'active' : ''}`,
-                onClick: (e) => { e.stopPropagation(); toggleFlag(run, 'pinned'); },
-                title: run.pinned ? 'Unpin' : 'Pin to top',
-              }, '📌'),
-              h('button', {
-                className: `flag-btn ${run.starred ? 'active' : ''}`,
-                onClick: (e) => { e.stopPropagation(); toggleFlag(run, 'starred'); },
-                title: run.starred ? 'Unstar' : 'Star',
-              }, '★'),
-            ),
-          );
-        }),
-      ),
-    ));
-  }
   if (!outputs.length) {
     container.appendChild(h('div', { style: { textAlign: 'center', padding: '24px', color: 'var(--t3)', fontSize: '13px' } }, 'No outputs found'));
+    return;
   }
+  container.appendChild(h('div', { className: 'run-list' },
+    ...outputs.map(run => {
+      const dirName = runDirName(run);
+      const isSelected = state.viewingRun?.outputDir === run.outputDir || state.viewingFile?.outputDir === run.outputDir;
+      return h('div', {
+        className: `run-item ${isSelected ? 'active' : ''}`,
+        onClick: () => { state.viewingRun = run; state.viewingFile = null; render(); }
+      },
+        h('div', { className: `run-dot ${run.status}` }),
+        h('div', { className: 'run-info' },
+          h('div', { style: { display: 'flex', gap: '8px', alignItems: 'baseline' } },
+            h('div', { className: 'run-agent', style: { fontSize: '13px' } },
+              run.id ? `Run #${run.id}` : run.startedAt || dirName,
+            ),
+            h('span', { className: 'tag' }, run.agent),
+          ),
+          run.startedAt
+            ? h('div', { className: 'run-time' }, new Date(run.startedAt).toLocaleString())
+            : null,
+          run.params && Object.keys(run.params).length
+            ? h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' } },
+                ...Object.entries(run.params).map(([k, v]) =>
+                  h('span', { className: 'tag', style: { fontSize: '11px', padding: '1px 6px' } }, `${k}: ${v}`)
+                ),
+              )
+            : null,
+          h('div', { className: 'file-tabs' },
+            ...run.files.map(f =>
+              h('span', { className: 'file-group' },
+                h('button', {
+                  className: `file-tab ${state.viewingFile?.file === f && state.viewingFile?.outputDir === run.outputDir ? 'active' : ''}`,
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    loadFileContent({ agent: run.agent, run: dirName }, f);
+                    state.viewingFile.outputDir = run.outputDir;
+                  }
+                }, f),
+                h('a', {
+                  className: 'dl-btn',
+                  href: `/api/download/${run.agent}/${dirName}/${f}`,
+                  title: 'Download',
+                  onClick: (e) => e.stopPropagation(),
+                }, '↓'),
+              )
+            ),
+          ),
+        ),
+        h('div', { className: 'flag-btns' },
+          h('button', {
+            className: `flag-btn ${run.pinned ? 'active' : ''}`,
+            onClick: (e) => { e.stopPropagation(); toggleFlag(run, 'pinned'); },
+            title: run.pinned ? 'Unpin' : 'Pin to top',
+          }, '📌'),
+          h('button', {
+            className: `flag-btn ${run.starred ? 'active' : ''}`,
+            onClick: (e) => { e.stopPropagation(); toggleFlag(run, 'starred'); },
+            title: run.starred ? 'Unstar' : 'Star',
+          }, '★'),
+        ),
+      );
+    }),
+  ));
 }
 
 function renderConfigEditor() {
